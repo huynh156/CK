@@ -23,9 +23,33 @@ LABELS = {
     "thời gian hâm nóng": "Thời gian hâm nóng",
 }
 
+ACTION_WORDS = {
+    "cho",
+    "lấy",
+    "dùng",
+    "đong",
+    "đổ",
+    "mở",
+    "cắt",
+    "vắt",
+    "kẹp",
+    "trưng",
+    "hâm",
+    "fill",
+    "refill",
+}
+
 
 def norm(text):
     return re.sub(r"\s+", " ", str(text or "").strip()).lower().strip(":")
+
+
+def clean_title(text):
+    return str(text or "").strip().strip(":").strip()
+
+
+def first_word(text):
+    return norm(text).split(" ", 1)[0]
 
 
 def is_probable_title(value):
@@ -37,10 +61,9 @@ def is_probable_title(value):
         return False
     if re.search(r"\d+\s*(?:ml|g|kg|oz|p|phút|giây|s|cái|hộp|viên|cây)\b", value, flags=re.I):
         return False
-    if ":" in value:
+    if ":" in value and not value.endswith(":"):
         return False
-    first_word = key.split(" ", 1)[0]
-    if first_word in {"cho", "lấy", "dùng", "đong", "đổ", "mở", "cắt", "vắt", "kẹp", "trưng", "hâm", "fill", "refill"}:
+    if first_word(value) in ACTION_WORDS:
         return False
     letters = [c for c in value if c.isalpha()]
     if not letters:
@@ -49,6 +72,16 @@ def is_probable_title(value):
     if uppercase_ratio > 0.72:
         return True
     return len(value) <= 34 and "\n" not in value and len(value.split()) <= 5
+
+
+def normalize_label(label, text):
+    label = label or "Ghi chú"
+    if norm(label) == "hsd":
+        sample = norm(text)
+        has_expiry_signal = re.search(r"\b(hsd|d\s*\+\s*\d+|n\s*\+\s*\d+|trên bao bì|trong ngày|tiếng|tháng)\b", sample, flags=re.I)
+        if not has_expiry_signal or first_word(text) in ACTION_WORDS:
+            return "Cách chế biến"
+    return label
 
 
 def split_steps(value):
@@ -107,6 +140,7 @@ def add_entry(card, label, text, source):
     text = str(text or "").strip()
     if not text:
         return
+    label = normalize_label(label, text)
     card["entries"].append(
         {
             "label": label or "Ghi chú",
@@ -149,7 +183,7 @@ def parse_lane(ws, label_col, text_col):
 
         if right_is_title:
             current = {
-                "title": right,
+                "title": clean_title(right),
                 "entries": [],
                 "tags": [],
                 "source": f"{ws.title}!{ws.cell(row, text_col).coordinate}",
@@ -160,7 +194,7 @@ def parse_lane(ws, label_col, text_col):
 
         if left_is_title_only:
             current = {
-                "title": left,
+                "title": clean_title(left),
                 "entries": [],
                 "tags": [],
                 "source": f"{ws.title}!{ws.cell(row, label_col).coordinate}",
@@ -171,7 +205,7 @@ def parse_lane(ws, label_col, text_col):
 
         if left and right and left_key not in LABELS and is_probable_title(left):
             current = {
-                "title": left,
+                "title": clean_title(left),
                 "entries": [],
                 "tags": [],
                 "source": f"{ws.title}!{ws.cell(row, label_col).coordinate}",
@@ -195,7 +229,18 @@ def parse_lane(ws, label_col, text_col):
         elif left:
             add_entry(card, last_label or "Bước", left, ws.cell(row, label_col).coordinate)
 
-    return [card for card in cards if card["entries"] or card["tags"]]
+    return [card for card in cards if (card["entries"] or card["tags"]) and not is_low_info_card(card)]
+
+
+def is_low_info_card(card):
+    if len(card["entries"]) != 1 or card["tags"]:
+        return False
+    text = norm(card["entries"][0]["text"])
+    generic_prep = {
+        "cho đá đến ngang miệng ly",
+        "cho đá đến ngang miệng ly",
+    }
+    return text in generic_prep
 
 
 def parse_workbook(path):
